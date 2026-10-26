@@ -1,0 +1,47 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Environments
+.env
+.venv
+env/
+venv/
+ENV/
+
+# pytest
+.pytest_cache/
+
+# mypy
+.mypy_cache/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDEs
+.idea/
+.vscode/
+
+# Build
+build/
+dist/
+*.egg-info/
+
+# Logs and media
+*.log
+*.jpg
+*.jpeg
+*.png
+*.mp4
+media/
+logs/
+
+# Model weights (fetched by ultralytics on first run)
+yolov8n.pt
+
+# Gazebo SITL runtime caches
+*.ulg
+fs/
+scratch/

@@ -1,0 +1,57 @@
+# =============================================================================
+# GarudaOne DroneOS — Python Dependencies
+# Target: Raspberry Pi 5 (8GB), Ubuntu 24.04 LTS ARM64
+# Also works on: Windows 10/11, macOS (for development/SITL)
+# =============================================================================
+
+# --- Core ---
+pyyaml>=6.0.1
+asyncio-mqtt>=0.16.2          # async utilities
+
+# --- Flight Controller (PX4 OFFBOARD via MAVLink) ---
+mavsdk>=2.1.0,<4.0.0          # PX4 official async Python SDK (v3.x gRPC API)
+pymavlink>=2.4.41             # Low-level MAVLink fallback
+
+# --- Computer Vision ---
+opencv-python-headless>=4.9.0 # Frame capture + image processing
+numpy>=1.26.0                 # Array operations
+
+# --- AI Inference (cross-platform — install what you need) ---
+# Uncomment based on your platform:
+# ncnn>=1.0.0                 # PicoDet-S inference (pip install ncnn on x86)
+# ncps>=0.0.7                 # CfC Liquid Neural Network (pip install ncps)
+# llama-cpp-python>=0.2.0     # LFM-2.5-230M + Needle 26M (CPU inference)
+# faster-whisper>=1.0.0       # Speech-to-text (whisper.cpp Python wrapper)
+# sounddevice>=0.4.6          # Microphone input
+# soundfile>=0.12.1           # Audio file I/O (for Piper TTS playback)
+
+# --- Voice Pipeline ---
+# openwakeword>=0.6.0         # Wake word detection
+# piper-tts>=1.2.0            # Text-to-speech (or use piper binary)
+
+# --- Utilities ---
+scipy>=1.12.0                 # B-spline interpolation, spatial transforms
+pyserial>=3.5                 # UART serial communication
+rich>=13.7.0                  # Cyberpunk terminal dashboard HUD
+
+# --- Development ---
+pytest>=8.0.0
+pytest-asyncio>=0.23.0
+
+# =============================================================================
+# Platform-specific install commands:
+#
+# Windows (development/SITL):
+#   pip install mavsdk opencv-python-headless numpy scipy pyyaml pytest
+#   pip install llama-cpp-python      # For LFM-2.5-230M + Needle 26M
+#   pip install faster-whisper sounddevice soundfile  # For voice input
+#   pip install ncnn                  # For PicoDet-S (x86 build)
+#
+# Raspberry Pi 5 (production):
+#   pip install -r requirements.txt
+#   # Build ncnn from source for ARM NEON: github.com/Tencent/ncnn
+#   pip install ncps                  # CfC Liquid Neural Networks
+#   pip install openwakeword          # Wake word
+#   pip install faster-whisper        # Whisper STT
+#   # Install Piper binary: github.com/rhasspy/piper
+# =============================================================================
