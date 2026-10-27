@@ -149,3 +149,36 @@ swarm:
   connection_scheme: "udpin"   # udpin: MAVSDK listens on 14540+i (VERIFIED vs PX4 SITL) | udpout | udp
   connection_host: "localhost"
   connection_timeout_s: 10     # per-drone heartbeat timeout before skipping
+
+# =============================================================================
+# Valdrada (Boundless NYC) — Unreal Engine 5.8.4 simulation environment
+# https://github.com/mkturkcan/boundless-nyc
+#
+# Valdrada is a city-scale NYC digital twin compiled from public municipal
+# records. It runs a simulation server on TCP port 2000 that GarudaOS drives
+# through garuda/flight/valdrada_client.py (ValdradaBackend).
+# =============================================================================
+
+valdrada:
+  enabled: true                # use Valdrada as the simulation environment
+  host: "127.0.0.1"
+  port: 2000                   # Valdrada simulation server TCP port
+  synchronous: true            # step the clock once per control tick
+  fixed_delta_seconds: 0.05    # 20 Hz simulation step
+
+  # Camera mount (matches the verified CityEnviron geometry, carried forward)
+  camera_width: 640
+  camera_height: 480
+  camera_fov: 90.0
+
+  # Follow pose: start 4 m AGL over a New York street
+  takeoff_altitude_m: 4.0
+  start_east: 0.0
+  start_north: 0.0
+  start_yaw_deg: 0.0
+
+  # Yaw burst parameters (sustained yaw free-falls the platform — see
+  # garuda/flight/valdrada_client.py for the measured trap and fix).
+  yaw_burst_s: 0.12
+  yaw_deg_per_burst: 20.0
+  yaw_max_bursts: 4

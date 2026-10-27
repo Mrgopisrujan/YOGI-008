@@ -1,18 +1,18 @@
 """
 Tests for the cinematic subject-follow stack.
 
-These run without AirSim, without a GPU, and without Unreal: a stub backend
+These run without Valdrada, without a GPU, and without Unreal: a stub backend
 renders a synthetic scene (coloured "pedestrians" on a canvas plus a depth
 map) and a stub detector returns the ground-truth boxes. That makes the
 control law, the identity lock, the avoidance veto and the shot planner
 testable in isolation — which is the only way to iterate on framing gains
-without a 60 s simulator round-trip per run.
+without a simulator round-trip per run.
 
 The stub deliberately reproduces the two failure modes that matter:
   * two pedestrians in frame at once (identity must not flip-flop), and
   * a wall that walks into the depth map mid-shot (velocity must be vetoed).
 
-NOTE: the stub's method names must match ``AirSimClient`` exactly. A mismatch
+NOTE: the stub's method names must match ``ValdradaBackend`` exactly. A mismatch
 here (``get_front_camera`` vs ``get_forward_camera``) type-checks fine, passes
 every test in this file, and then fails on the first real tick in the
 simulator. ``TestBackendContractMatchesRealClient`` guards that.
@@ -33,108 +33,22 @@ from garuda.perception.subject_lock import SubjectLock
 # ── Backend contract ───────────────────────────────────────────────────
 
 def test_backend_contract_matches_real_client():
-    """The stub and the real AirSim client must expose identical method names.
+    """The stub and the real Valdrada client must expose identical method names.
 
     FlightBackend is a Protocol, so a missing method is not a type error and no
     test using a stub can catch it. This is the one place the two are compared.
     """
-    from garuda.flight.airsim_client import AirSimClient
+    from garuda.flight.valdrada_client import ValdradaBackend
 
     required = {m for m in dir(FlightBackend) if not m.startswith("_")}
     on_stub = {m for m in dir(StubBackend) if not m.startswith("_")}
-    on_client = set(dir(AirSimClient))
+    on_client = set(dir(ValdradaBackend))
 
     assert required <= on_stub, f"StubBackend missing: {sorted(required - on_stub)}"
     assert required <= on_client, (
-        f"AirSimClient cannot satisfy FlightBackend, missing: "
+        f"ValdradaBackend cannot satisfy FlightBackend, missing: "
         f"{sorted(required - on_client)}"
     )
-
-
-def test_backend_contract_matches_projectairsim_backend():
-    """ProjectAirSimBackend must expose the same FlightBackend surface.
-
-    This is the second real backend, and it was written against a guessed API
-    before the simulator was available: it called `pas.VehicleControlsType`,
-    `client.loop`, `takeoff_async(altitude_m=)`, `get_camera_image`,
-    `World.list_scene_objects` and `pas.Transform`, none of which exist. Every
-    one of those raises only at runtime, so the whole file imported clean and
-    would have failed on the first tick. Name comparison catches that class of
-    bug without a simulator.
-    """
-    pytest.importorskip("projectairsim", reason="Project AirSim client not installed")
-    from garuda.flight.pas_client import ProjectAirSimBackend
-
-    required = {m for m in dir(FlightBackend) if not m.startswith("_")}
-    on_backend = set(dir(ProjectAirSimBackend))
-    assert required <= on_backend, (
-        f"ProjectAirSimBackend cannot satisfy FlightBackend, missing: "
-        f"{sorted(required - on_backend)}"
-    )
-
-
-def test_pas_async_methods_are_coroutines():
-    """Naming convention check: ``*_async`` are coroutines, the rest are not.
-
-    ``enable_api_control`` and ``arm`` sit next to ``takeoff_async`` and return
-    plain bools. Awaiting them raises ``TypeError: A coroutine object is
-    required`` at connect time, which is exactly what the first live run hit.
-    """
-    pas = pytest.importorskip("projectairsim", reason="Project AirSim not installed")
-    import inspect
-
-    for meth in (
-        "takeoff_async",
-        "land_async",
-        "hover_async",
-        "move_by_velocity_async",
-        "move_by_velocity_body_frame_async",
-    ):
-        assert inspect.iscoroutinefunction(getattr(pas.Drone, meth)), (
-            f"Drone.{meth} should be a coroutine"
-        )
-    for meth in ("enable_api_control", "arm", "get_ground_truth_pose"):
-        assert not inspect.iscoroutinefunction(getattr(pas.Drone, meth)), (
-            f"Drone.{meth} is a plain method; awaiting it raises TypeError"
-        )
-
-
-def test_pas_backend_calls_only_real_client_api():
-    """Every ``projectairsim`` attribute this backend touches must exist.
-
-    The rewrite verified each name against the installed client at runtime.
-    This pins the names so a client upgrade cannot silently turn them into
-    AttributeErrors at flight time.
-    """
-    pytest.importorskip("projectairsim", reason="Project AirSim client not installed")
-    import projectairsim as pas
-    from projectairsim.types import Pose
-
-    # Names the backend uses on the module / classes.
-    assert hasattr(pas, "ProjectAirSimClient")
-    assert hasattr(pas, "World")
-    assert hasattr(pas, "Drone")
-    for meth in (
-        "enable_api_control",
-        "arm",
-        "takeoff_async",
-        "land_async",
-        "hover_async",
-        "move_by_velocity_async",
-        "move_by_velocity_body_frame_async",
-        "rotate_by_yaw_rate_async",
-        "get_ground_truth_pose",
-    ):
-        assert hasattr(pas.Drone, meth), f"Drone.{meth} missing"
-    assert hasattr(pas.ProjectAirSimClient, "subscribe")
-    assert hasattr(pas.ProjectAirSimClient, "connect")
-    # Deliberately NOT asserting close(): this client build has no
-    # close()/shutdown(), so calling one would AttributeError at teardown.
-    assert hasattr(pas.World, "spawn_object")
-    assert hasattr(pas.World, "destroy_object")
-    assert hasattr(pas.World, "list_actors")
-    assert hasattr(pas, "image_utils"), "image_utils module missing"
-    assert hasattr(Pose, "__init__")
 
 
 # ── Fakes ──────────────────────────────────────────────────────────────
