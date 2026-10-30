@@ -42,13 +42,14 @@ Traps (re-learned from the AirSim port, repeated here to avoid re-learning):
   * Synchronous mode: ``apply_settings(WorldSettings(synchronous_mode=True,
     fixed_delta_seconds=...))`` then ``world.tick()`` drives the sim. Frames
     only publish when the clock is stepped.
-  * Cameras are pub/sub: ``cam.listen(callback)``. The callback must not
+  * Cameras are pub/sub: ``sensor.listen(callback)``. The callback must not
     block — frame buffers are written, not parsed, on the socket thread.
-  * Valdrada images are BGRA uint8; drop the alpha channel to get BGR for YOLO.
-  * Depth is encoded as a 24-bit integer across R/G/B; decode to metres.
+  * Valdrada RGB images are RGBA uint8; drop alpha and reorder to BGR for YOLO.
+  * Depth is already float32 metres via ``DepthImage.to_numpy()`` (top-down
+    rows, ``depth_max`` = sky). No 24-bit decode, no flipud.
   * NED is +z down: climbing is negative vz in the control law.
   * Any sustained yaw disengages the altitude hold (same failure as Project
-    AirSim) — yaw is pulsed in short bursts with a hover between them.
+    AirSim) — yaw is pulsed in short bursts with a re-hold between them.
 """
 
 from __future__ import annotations
@@ -57,21 +58,13 @@ import atexit
 import logging
 import math
 import threading
-from typing import Any, Optional
+from typing import Any, Callable, Optional
 
 import numpy as np
 
-log = logging.getLogger("valdrada_client")
-
 try:
     import valdrada
-    from valdrada import (
-        Client,
-        Location,
-        Rotation,
-        Transform,
-        WorldSettings,
-    )
+    from valdrada import Client, Location, Rotation, Transform, WorldSettings
     VALDRADA_AVAILABLE = True
 except ImportError:  # pragma: no cover - client is optional
     valdrada = None
@@ -93,6 +86,10 @@ MAX_BURSTS = 4
 
 # Candidate quadrotor blueprint IDs, in case Valdrada ships one.
 _DRONE_BLUEPRINTS = ("vehicle.drone.quadrotor", "vehicle.quadrotor", "vehicle.drone")
+
+# Camera blueprint IDs.
+_RGB_CAM_BP = "sensor.camera.rgb"
+_DEPTH_CAM_BP = "sensor.camera.depth"
 
 
 def clamp(value: float, lo: float, hi: float) -> float:
@@ -197,9 +194,8 @@ class ValdradaBackend:
             if self.is_connected:
                 return True
             try:
-                self._client = Client(self.host, self.port)
-                self._client.set_timeout(timeout)
-                self._world = self._client.get_world()
+                self._client = Client(self.host, self.port, timeout=timeout)
+                self._world = self._client.get_world()  # blocks until server ready
 
                 if self.synchronous:
                     settings = self._world.get_settings()
@@ -268,53 +264,49 @@ class ValdradaBackend:
     def _spawn_cameras(self) -> None:
         """Spawn RGB + depth cameras attached to the platform."""
         lib = self._world.get_blueprint_library()
-        # Mount matches the verified CityEnviron geometry: forward of the props,
+        # Mount matches the verified geometry: forward of the props,
         # slightly pitched down, out of the airframe.
         cam_transform = Transform(
             Location(x=0.48, y=0.0, z=-0.08),
             Rotation(pitch=-3.0, roll=0.0, yaw=0.0),
         )
 
-        rgb_bp = lib.find("sensor.camera.rgb")
+        rgb_bp = lib.find(_RGB_CAM_BP)
         rgb_bp.set_attribute("image_size_x", str(self.camera_width))
         rgb_bp.set_attribute("image_size_y", str(self.camera_height))
         rgb_bp.set_attribute("fov", str(self.camera_fov))
+        rgb_bp.set_attribute("sensor_tick", "0.0")  # every frame
         self._rgb_cam = self._world.spawn_actor(
             rgb_bp, cam_transform, attach_to=self._platform_actor()
         )
-        self._rgb_cam.listen(lambda image: self._on_rgb(image))
+        self._rgb_cam.listen(lambda data: self._on_rgb(data))
 
-        depth_bp = lib.find("sensor.camera.depth")
+        depth_bp = lib.find(_DEPTH_CAM_BP)
         depth_bp.set_attribute("image_size_x", str(self.camera_width))
         depth_bp.set_attribute("image_size_y", str(self.camera_height))
         depth_bp.set_attribute("fov", str(self.camera_fov))
+        depth_bp.set_attribute("sensor_tick", "0.0")  # every frame
         self._depth_cam = self._world.spawn_actor(
             depth_bp, cam_transform, attach_to=self._platform_actor()
         )
-        self._depth_cam.listen(lambda image: self._on_depth(image))
+        self._depth_cam.listen(lambda data: self._on_depth(data))
 
-    def _on_rgb(self, image: Any) -> None:
-        """Pub/sub callback: decode a Valdrada BGRA frame to BGR uint8."""
+    def _on_rgb(self, data: Any) -> None:
+        """Camera callback: decode a Valdrada RGBA frame to BGR uint8."""
         try:
-            arr = np.frombuffer(image.raw_data, dtype=np.uint8)
-            arr = arr.reshape((image.height, image.width, 4))
-            bgr = arr[:, :, :3]  # Valdrada is BGRA; drop alpha
+            arr = data.to_numpy()  # (h, w, 4) RGBA uint8
+            bgr = arr[:, :, :3]  # RGBA -> drop alpha
+            # Reorder RGBA -> BGR: [R, G, B] -> [B, G, R]
+            bgr = bgr[:, :, [2, 1, 0]]
             self._frames.put_rgb(np.ascontiguousarray(bgr))
         except Exception as e:
             log.debug("rgb frame decode failed: %s", e)
 
-    def _on_depth(self, image: Any) -> None:
-        """Pub/sub callback: decode metric depth to float32 metres."""
+    def _on_depth(self, data: Any) -> None:
+        """Camera callback: decode metric depth to float32 metres."""
         try:
-            arr = np.frombuffer(image.raw_data, dtype=np.uint8)
-            arr = arr.reshape((image.height, image.width, 4))
-            # Valdrada depth encodes a 24-bit integer across R/G/B.
-            raw = (
-                arr[:, :, 0].astype(np.float32)
-                + arr[:, :, 1].astype(np.float32) * 256.0
-                + arr[:, :, 2].astype(np.float32) * 65536.0
-            )
-            metres = (raw / 16777216.0) * 1000.0
+            # DepthImage.to_numpy() returns (h, w) float32 metres, top-down rows.
+            metres = data.to_numpy().astype(np.float32)
             self._frames.put_depth(np.ascontiguousarray(metres))
         except Exception as e:
             log.debug("depth frame decode failed: %s", e)
@@ -325,6 +317,7 @@ class ValdradaBackend:
                 for cam in (self._rgb_cam, self._depth_cam):
                     if cam is not None:
                         try:
+                            cam.stop()
                             cam.destroy()
                         except Exception:
                             pass
@@ -337,6 +330,11 @@ class ValdradaBackend:
                     settings = self._world.get_settings()
                     settings.synchronous_mode = False
                     self._world.apply_settings(settings)
+                if self._client is not None:
+                    try:
+                        self._client.close()
+                    except Exception:
+                        pass
             except Exception as e:
                 log.debug("close error: %s", e)
             finally:
@@ -364,7 +362,7 @@ class ValdradaBackend:
                 return {"connected": False}
             try:
                 t = self._platform_actor().get_location()
-                r = self._platform_actor().get_rotation()
+                r = self._platform_actor().get_transform().rotation
                 # ENU (x=east, y=north, z=up) -> NED (x=north, y=east, z=down)
                 ned_x = float(t.y)
                 ned_y = float(t.x)
@@ -392,7 +390,7 @@ class ValdradaBackend:
                 return False
             try:
                 t = self._platform_actor().get_location()
-                r = self._platform_actor().get_rotation()
+                r = self._platform_actor().get_transform().rotation
                 steps = max(1, int(abs(float(altitude_m) - float(t.z)) / 0.5))
                 for i in range(1, steps + 1):
                     frac = i / steps
@@ -452,7 +450,7 @@ class ValdradaBackend:
                 return False
             try:
                 t = self._platform_actor().get_location()
-                r = self._platform_actor().get_rotation()
+                r = self._platform_actor().get_transform().rotation
                 yaw = math.radians(float(r.yaw))
 
                 # Body-frame (forward, right) -> world (east, north).
@@ -466,8 +464,7 @@ class ValdradaBackend:
                 new_up = float(t.z) + up * duration_s
 
                 # Altitude-hold trim so a bare velocity command cannot drift into
-                # the pavement (three consecutive ticks previously sank 6.36 ->
-                # 3.23 -> -0.56 m).
+                # the pavement.
                 if self._target_alt is not None:
                     err = self._target_alt - new_up  # >0 = below target
                     new_up += clamp(err * 1.2, -1.5, 1.5)
@@ -495,7 +492,7 @@ class ValdradaBackend:
     def _hold_position(self) -> None:
         """Re-issue the current transform (zero movement) and tick."""
         t = self._platform_actor().get_location()
-        r = self._platform_actor().get_rotation()
+        r = self._platform_actor().get_transform().rotation
         self._set_platform_transform(
             east=float(t.y), north=float(t.x), up=float(t.z), yaw_deg=float(r.yaw)
         )
@@ -505,7 +502,7 @@ class ValdradaBackend:
     def _yaw_burst(self, rate_dps: float, duration_s: float) -> None:
         """Pulse yaw briefly then re-hold, to avoid the free-fall failure."""
         t = self._platform_actor().get_location()
-        r = self._platform_actor().get_rotation()
+        r = self._platform_actor().get_transform().rotation
         steps = max(1, int(duration_s / BURST_S))
         for _ in range(steps):
             new_yaw = (float(r.yaw) + rate_dps * BURST_S) % 360.0

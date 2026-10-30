@@ -14,7 +14,8 @@
 setlocal enabledelayedexpansion
 
 :: ---- Configure this to your Valdrada install folder -----------------------
-set "VALDRADA_DIR=D:\Valdrada\UE_5.8.4"
+:: Extracted from Valdrada-0.6.2-win64.zip (plus tiles + terrain zips)
+set "VALDRADA_DIR=D:\Valdrada\server"
 :: ---------------------------------------------------------------------------
 
 if not exist "%VALDRADA_DIR%" (
