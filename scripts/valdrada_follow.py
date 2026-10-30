@@ -17,11 +17,11 @@ CityEnviron is removed.
 Usage (PowerShell):
 
     # 1. Launch the Valdrada UE 5.8.4 environment (holds TCP :2000)
-    .\scripts\launch_valdrada.bat
+    .\\scripts\\launch_valdrada.bat
 
     # 2. Run the GarudaOS follow loop against it
     $env:GARUDA_MODE = "simulation"
-    venv\Scripts\python.exe scripts\valdrada_follow.py --duration 30 --conf 0.15
+    venv\\Scripts\\python.exe scripts\\valdrada_follow.py --duration 30 --conf 0.15
 
 Prints a verdict table: lock ratio > 30 %, mean |x framing error| < 0.35,
 identity switches == 0, plus whether an mp4 was written.
